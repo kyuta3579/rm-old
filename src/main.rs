@@ -10,8 +10,8 @@
 use std::env;
 use std::path::Path;
 use std::time::SystemTime;
-use std::fs;
-use std::fs::File;
+use std::fs::{self, File};
+use std::io::{self, Write};
 
 struct Dir{
     parent_path:    String,
@@ -25,6 +25,7 @@ impl Dir{
             files_path:     Vec::new(),
         }
     }
+
     fn get_target_files(config: &Config) -> Result<Vec<Dir>, String> {
         let now_sys_time            = SystemTime::now();
         let mut targets: Vec<Dir>    = Vec::new();
@@ -41,24 +42,25 @@ impl Dir{
     }
 
     fn print(&self) -> () {
-        if !self.files_path.is_empty() {
-            println!("{}:",self.parent_path);
-            for file in self.files_path.iter() {
-                println!("    {}", file);
-            }
-            println!("\n");
+        println!("{}:",self.parent_path);
+        for file in self.files_path.iter() {
+            println!("    {}", file);
         }
+        println!("");
+    }
+
+    fn get_amount_files(&self) -> u64 {
+        self.files_path.len() as u64
     }
 }
 
 struct Config {
-    cur_path:       String,
     target_path:    Vec<String>,
     duration_days:  u64,
     change_days:    bool,
     do_intr:        bool,
     assume_yes:     bool,
-    do_dir:         bool,
+    recursion:      bool,
     verbose:        bool,
     dry_run:        bool,
 }
@@ -66,13 +68,12 @@ struct Config {
 impl Config {
     fn new () -> Config {
         Config {
-            cur_path:       env::current_dir().unwrap().to_str().unwrap().to_string(),
             target_path:    Vec::new(),
             duration_days:  60,
             change_days:    false,
             do_intr:        false,
             assume_yes:     false,
-            do_dir:         false,
+            recursion:      false,
             verbose:        false,
             dry_run:        false,
         }
@@ -81,21 +82,30 @@ impl Config {
     fn print(&self) -> () {
         if self.verbose {
             for path in self.target_path.iter() {
-                println!("target_path: {}", path);
+                println!("target_path   : {}", path);
             }
-            println!("duration_days: {}", self.duration_days);
+            println!("duration_days : {}", self.duration_days);
             if self.do_intr {
-                println!("do_interact: yes");
+                println!("interaction   : yes");
+            } else {
+                println!("interaction   : no");
             }
             if self.assume_yes {
-                println!("assume_yes: yes");
+                println!("assume_yes    : yes");
+            } else {
+                println!("assume_yes    : no");
             }
-            if self.do_dir {
-                println!("directory_target: yes");
+            if self.recursion {
+                println!("recursion     : yes");
+            } else {
+                println!("recursion     : no");
             }
             if self.dry_run {
-                println!("dry_run: yes");
+                println!("dry_run       : yes");
+            } else {
+                println!("dry_run       : no");
             }
+            println!("");
         }
     }
 }
@@ -121,10 +131,15 @@ fn main() {
         }
     };
 
-    for dir in target_files {
-        dir.print();
+    if target_files.is_empty() {
+        println!("Target files not exists!");
+        return ;
     }
 
+    match execute_rm(&target_files, &ret_config) {
+        Ok(_)           => println!("Complete!"),
+        Err(err_msg)    => println!("{}", err_msg),
+    }
 }
 
 fn parse_config(args: &[String]) -> Result<Config, String> {
@@ -133,7 +148,7 @@ fn parse_config(args: &[String]) -> Result<Config, String> {
 
     for arg in arg_iter {
         if !config.change_days && '-' == arg.as_str().chars().nth(0).unwrap() {
-            match check_option(arg, &mut config) {
+            match get_option(arg, &mut config) {
                 Ok(_)  => {},
                 Err(err_msg)          => {return Err(err_msg);},
             }
@@ -150,7 +165,7 @@ fn parse_config(args: &[String]) -> Result<Config, String> {
                     },
                 }
             } else {
-                match check_path(arg, &mut config){
+                match get_path(arg, &mut config){
                     Ok(_)  => {},
                     Err(err_msg)          => {return Err(err_msg);},
                 }
@@ -161,7 +176,7 @@ fn parse_config(args: &[String]) -> Result<Config, String> {
     if config.change_days {
         Err("rm-old -d: Input duration days after -d.".to_string())
     } else if config.target_path.is_empty(){
-        config.target_path.push(config.cur_path.clone());
+        config.target_path.push("./".to_string());
         Ok(config)
     } else {
         Ok(config)
@@ -169,7 +184,7 @@ fn parse_config(args: &[String]) -> Result<Config, String> {
 
 }
 
-fn check_option(arg: &String, config: &mut Config) -> Result<(), String> {
+fn get_option(arg: &String, config: &mut Config) -> Result<(), String> {
     let c_iter = arg.as_str().chars().skip(1);
     for c in c_iter {
         match c {
@@ -177,7 +192,7 @@ fn check_option(arg: &String, config: &mut Config) -> Result<(), String> {
                 config.change_days = true;
             },
             'r' => {
-                config.do_dir = true;
+                config.recursion = true;
             },
             'i' => {
                 config.do_intr = true;
@@ -200,13 +215,13 @@ fn check_option(arg: &String, config: &mut Config) -> Result<(), String> {
     Ok(())
 }
 
-fn check_path(arg: &String, config: &mut Config) -> Result<(), String> {
+fn get_path(arg: &String, config: &mut Config) -> Result<(), String> {
     let path = Path::new(arg);
     if path.exists() {
         if path.has_root() {
             config.target_path.push(arg.clone());
         } else {
-            config.target_path.push(format!("{}/{}", config.cur_path, arg.clone()));
+            config.target_path.push(format!("./{}", arg.clone()));
         }
     } else {
         return Err(format!("rm-old: illegal path: {}", arg));
@@ -225,9 +240,7 @@ fn get_files_in_dir(path: &String, config: &Config, now: SystemTime) -> Result<V
         },
         Ok(paths)   => paths,
     };
-
-    target_dir.parent_path = path.clone();
-
+    target_dir.parent_path = path.clone() + "/";
 
     for f in files {
         let file_path           = f.unwrap().path();
@@ -240,9 +253,11 @@ fn get_files_in_dir(path: &String, config: &Config, now: SystemTime) -> Result<V
         };
 
         if file_meta.is_file() && (config.duration_days * 86400 < duration_time_by_ac) {
-                target_dir.files_path.push(file_path.as_path().to_str().unwrap().to_string());
-        } else if file_meta.is_dir() && config.do_dir {
-            match get_files_in_dir(&(file_path.as_path().to_str().unwrap().to_string()), config, now)
+                target_dir.files_path.push(
+                    file_path.as_path().to_str().unwrap().to_string());
+        } else if file_meta.is_dir() && config.recursion {
+            match get_files_in_dir(
+                &(file_path.as_path().to_str().unwrap().to_string()), config, now)
             {
                 Ok(mut files)       => {
                     target.append(&mut files);
@@ -251,81 +266,150 @@ fn get_files_in_dir(path: &String, config: &Config, now: SystemTime) -> Result<V
             };
         }
     }
-    target.push(target_dir);
-
+    if !target_dir.files_path.is_empty() {
+        target.push(target_dir);
+    }
     Ok(target)
 }
 
 
-fn execute_rm(target_files: Vec<String>, config: &Config) -> Result<(), String> {
-    if target_files.is_empty() {
-        return Err("Target files not exists!".to_string());
+fn execute_rm(target_dirs: &Vec<Dir>, config: &Config) -> Result<(), String> {
+    let mut amount_target = 0;
+    for dir in target_dirs.iter() {
+        dir.print();
+        amount_target = amount_target + dir.get_amount_files();
     }
 
-    if config.assume_yes {
-        for file_path in target_files.iter() {
-            match fs::remove_file(Path::new(file_path)) {
-                Ok(_)   => println!("removed: {}", file_path),
-                Err(_)  => return Err("Fatal Error.".to_string()),
+    println!("target files: {}", amount_target);
+
+    match interaction("Remove the above files. Ok? [Y/n]: ", config.assume_yes) {
+        Ok(_)   => {},
+        Err(_)  => {return Err("Canceled.".to_string());}
+    }
+
+    for dir in target_dirs.iter() {
+        println!("{} :", dir.parent_path);
+        for f in dir.files_path.iter() {
+            match remove_target(f, config) {
+                Ok(_)   => {},
+                Err(err_msg)  => {
+                    println!("{} {}", err_msg, f);
+                    continue;
+                },
             }
         }
-        return Ok(());
-    }
-
-    for file_path in target_files.iter() {
-        println!("{}", file_path);
+        println!("");
     }
     
     Ok(())
+}
+
+fn remove_target(file_path: &String, config: &Config) -> Result<(), String>{
+
+    if config.do_intr {
+        println!("    {}", file_path);
+        match interaction("Remove This file? [Y/n]: ", config.assume_yes) {
+            Ok(_)   => {},
+            Err(_)  => {return Err("Canceled:".to_string());}
+        }
+    }
+    if !config.dry_run {
+        match fs::remove_file(file_path) {
+            Ok(_)   => {println!("Removed: {}", file_path)},
+            Err(_)  => {return Err("Remove failed:".to_string());},
+        }
+    } else {
+        println!("Removed: {}", file_path);
+    }
+
+    if config.do_intr {
+        println!("");
+    }
+
+    Ok(())
+}
+
+fn interaction(msg: &str, assume_yes: bool) -> Result<(), ()> {
+    let mut _ret: Result<(), ()> = Ok(());
+
+    if assume_yes {
+        return _ret;
+    }
+
+    print!("{}", msg);
+    io::stdout().flush().unwrap();
+
+    loop{
+        let s = get_string().unwrap().as_str().chars().nth(0).unwrap();
+        match s {
+            'Y' => {
+                _ret = Ok(());
+                break;
+            }
+            'n' => {
+                _ret = Err(());
+                break;
+            }
+            _   => {
+                print!("Invalid value. Please input [Y/n].\n{}", msg);
+                io::stdout().flush().unwrap();
+            },
+        }
+    }
+    _ret
+}
+
+fn get_string() -> io::Result<String> {
+    let mut buf = String::new();
+    io::stdin().read_line(&mut buf)?;
+    Ok(buf)
 }
 
 #[cfg(test)]
 mod test{
     use super::*;
     #[test]
-    fn test_check_option() {
+    fn test_get_option() {
         let options = ['r', 'i', 'y', 'v', 'n'];
         let mut config = Config::new();
 
         for c in options.iter() {
             match c {
                 'r' => {
-                    assert!(check_option(&format!("-{}", c).to_string(), &mut config).is_ok());
-                    assert!(config.do_dir);
+                    assert!(get_option(&format!("-{}", c).to_string(), &mut config).is_ok());
+                    assert!(config.recursion);
                 },
                 'i' => {
-                    assert!(check_option(&format!("-{}", c).to_string(), &mut config).is_ok());
+                    assert!(get_option(&format!("-{}", c).to_string(), &mut config).is_ok());
                     assert!(config.do_intr);
                 },
                 'y' => {
-                    assert!(check_option(&format!("-{}", c).to_string(), &mut config).is_ok());
+                    assert!(get_option(&format!("-{}", c).to_string(), &mut config).is_ok());
                     assert!(config.assume_yes);
                 },
                 'v' => {
-                    assert!(check_option(&format!("-{}", c).to_string(), &mut config).is_ok());
+                    assert!(get_option(&format!("-{}", c).to_string(), &mut config).is_ok());
                     assert!(config.verbose);
                 },
                 'n' => {
-                    assert!(check_option(&format!("-{}", c).to_string(), &mut config).is_ok());
+                    assert!(get_option(&format!("-{}", c).to_string(), &mut config).is_ok());
                     assert!(config.dry_run);
                 },
-                _   => assert!(check_option(&format!("-{}", c).to_string(), &mut config).is_err()),
+                _   => assert!(get_option(&format!("-{}", c).to_string(), &mut config).is_err()),
             }
         }
     }
 
     #[test]
     fn test_parse_config() {
-        let correct_args: Vec<Vec<String>> = vec![  //vec!["rm-old".to_string(), "/dev/zero/".to_string(), "-d".to_string(), "90".to_string(), "-riyvn".to_string()], 
-                                                    vec!["rm-old".to_string(), "-d".to_string(), "90".to_string(), "-riyvn".to_string()],
+        let correct_args: Vec<Vec<String>> = vec![  vec!["rm-old".to_string(), "-d".to_string(), "90".to_string(), "-riyvn".to_string()],
                                                     vec!["rm-old".to_string(), "-d".to_string(), "90".to_string()],
                                                     vec!["rm-old".to_string(), "-riyvn".to_string()],
                                                     vec!["rm-old".to_string(), "-driyvn".to_string(), "90".to_string()],
                                                     vec!["rm-old".to_string()],
         ];
 
-        let invalid_args: Vec<Vec<String>> = vec![  // vec!["rm-old".to_string(), "/dev/zero/not_exist/".to_string(), "90".to_string(), "-riyvnd".to_string()],
-                                                    // After "-d" is not number.
+        let invalid_args: Vec<Vec<String>> = vec![  // After "-d" is not number.
                                                     vec!["rm-old".to_string(), "-d".to_string(), "-riyvn".to_string()],
                                                     // not path.
                                                     vec!["rm-old".to_string(), "jifsl.?s_sdfe".to_string()],
