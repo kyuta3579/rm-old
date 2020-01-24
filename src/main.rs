@@ -18,7 +18,7 @@ struct Dir{
     files_path:     Vec<String>,
 }
 
-impl Dir{
+impl Dir {
     fn new() -> Dir {
         Dir {
             parent_path:    String::new(),
@@ -42,7 +42,7 @@ impl Dir{
     }
 
     fn print(&self) -> () {
-        println!("{}:",self.parent_path);
+        println!("{}/:",self.parent_path);
         for file in self.files_path.iter() {
             println!("    {}", file);
         }
@@ -147,7 +147,9 @@ fn parse_config(args: &[String]) -> Result<Config, String> {
     let arg_iter = args.iter().skip(1);
 
     for arg in arg_iter {
-        if !config.change_days && '-' == arg.as_str().chars().nth(0).unwrap() {
+        if "--help" == arg || "-h" == arg {
+            return Err(show_help());
+        } else if !config.change_days && '-' == arg.as_str().chars().nth(0).unwrap() {
             match get_option(arg, &mut config) {
                 Ok(_)  => {},
                 Err(err_msg)          => {return Err(err_msg);},
@@ -217,11 +219,15 @@ fn get_option(arg: &String, config: &mut Config) -> Result<(), String> {
 
 fn get_path(arg: &String, config: &mut Config) -> Result<(), String> {
     let path = Path::new(arg);
-    if path.exists() {
+    if path.exists() && path.is_dir(){
         if path.has_root() {
             config.target_path.push(arg.clone());
         } else {
-            config.target_path.push(format!("./{}", arg.clone()));
+            if arg.chars().last().unwrap() != '/' {
+                config.target_path.push(format!("./{}/", arg.clone().remove(arg.len()-1)));
+            } else {
+                config.target_path.push(format!("./{}", arg));
+            }
         }
     } else {
         return Err(format!("rm-old: illegal path: {}", arg));
@@ -240,7 +246,8 @@ fn get_files_in_dir(path: &String, config: &Config, now: SystemTime) -> Result<V
         },
         Ok(paths)   => paths,
     };
-    target_dir.parent_path = path.clone() + "/";
+
+    target_dir.parent_path = path.clone();
 
     for f in files {
         let file_path           = f.unwrap().path();
@@ -365,6 +372,18 @@ fn get_string() -> io::Result<String> {
     Ok(buf)
 }
 
+fn show_help() -> String {
+    "rm-old: remove the old files in dir.
+    -r          : recursion. target dir in dir.
+    -i          : ask each file when remove.
+    -y          : assume yes.
+    -d [days]   : specify duration of day.(default is 60 days)
+    -v          : verbose.
+    -n          : dry run. not a remove, only show log.
+    -h, --help  : show help.(this!)
+    ".to_string()
+}
+
 #[cfg(test)]
 mod test{
     use super::*;
@@ -423,5 +442,33 @@ mod test{
         for arg in invalid_args.iter() {
             assert!(parse_config(&arg).is_err());
         }
+    }
+    #[test]
+    fn test_get_files() {
+        let mut config = Config {
+            target_path:    vec!["test_dir".to_string()],
+            duration_days:  0,
+            change_days:    false,
+            do_intr:        false,
+            assume_yes:     false,
+            recursion:      false,
+            verbose:        false,
+            dry_run:        false,
+        };
+
+        let mut test_dir = match Dir::get_target_files(&config) {
+            Ok(dir)     => dir,
+            Err(msg)    => panic!("{}", msg),
+        };
+        assert_eq!(1, test_dir.len());
+
+        config.recursion = true;
+
+        test_dir = match Dir::get_target_files(&config) {
+            Ok(dir)     => dir,
+            Err(msg)    => panic!("{}", msg),
+        };
+
+        assert_eq!(3, test_dir.len());
     }
 }
