@@ -1,10 +1,13 @@
-// rm-old
-/* usage: rm-old -d [days] -riyv
-    r:dir
-    i:interactive
-    y:assume yes
-    v:verbose
-    n:dry run
+/*rm-old: remove the old files in dir.
+Usage       :rm-old [dir_path] [option]
+Options
+-r          : recursion. target dir in dir.
+-i          : ask each file when remove.
+-y          : assume yes.
+-d [days]   : specify duration of day.(default is 60 days)
+-v          : verbose.
+-n          : dry run. not a remove, only show log.
+-h, --help  : show help.
 */
 
 use std::env;
@@ -43,7 +46,7 @@ impl Dir {
 
     fn print(&self) -> () {
         println!("{}/:",self.parent_path);
-        for file in self.files_path.iter() {
+        for file in self.files_path.iter().rev() {
             println!("    {}", file);
         }
         println!("");
@@ -116,7 +119,7 @@ fn main() {
     let ret_config = match parse_config(&args) {
         Ok(config)    => config,
         Err(err_msg)      => {
-            println!("{}\nusage: rm-old -d [days] -iryv", err_msg);
+            println!("{}\nUsage: rm-old [dir_path] -d [days] -iryv", err_msg);
             return ;
         },
     };
@@ -144,9 +147,8 @@ fn main() {
 
 fn parse_config(args: &[String]) -> Result<Config, String> {
     let mut config = Config::new();
-    let arg_iter = args.iter().skip(1);
 
-    for arg in arg_iter {
+    for arg in args[1..].iter() {
         if "--help" == arg || "-h" == arg {
             return Err(show_help());
         } else if !config.change_days && '-' == arg.as_str().chars().nth(0).unwrap() {
@@ -176,19 +178,15 @@ fn parse_config(args: &[String]) -> Result<Config, String> {
     }
 
     if config.change_days {
-        Err("rm-old -d: Input duration days after -d.".to_string())
+        return Err("rm-old -d: Input duration days after -d.".to_string());
     } else if config.target_path.is_empty(){
-        config.target_path.push("./".to_string());
-        Ok(config)
-    } else {
-        Ok(config)
+        config.target_path.push(".".to_string());
     }
-
+    Ok(config)
 }
 
 fn get_option(arg: &String, config: &mut Config) -> Result<(), String> {
-    let c_iter = arg.as_str().chars().skip(1);
-    for c in c_iter {
+    for c in arg.as_str()[1..].chars() {
         match c {
             'd' => {
                 config.change_days = true;
@@ -223,8 +221,10 @@ fn get_path(arg: &String, config: &mut Config) -> Result<(), String> {
         if path.has_root() {
             config.target_path.push(arg.clone());
         } else {
-            if arg.chars().last().unwrap() != '/' {
-                config.target_path.push(format!("./{}/", arg.clone().remove(arg.len()-1)));
+            if arg.chars().last().unwrap() == '/' {
+                let mut arg_clone = arg.clone();
+                arg_clone.remove(arg.len()-1);
+                config.target_path.push(format!("./{}", arg_clone));
             } else {
                 config.target_path.push(format!("./{}", arg));
             }
@@ -261,7 +261,7 @@ fn get_files_in_dir(path: &String, config: &Config, now: SystemTime) -> Result<V
 
         if file_meta.is_file() && (config.duration_days * 86400 < duration_time_by_ac) {
                 target_dir.files_path.push(
-                    file_path.as_path().to_str().unwrap().to_string());
+                    file_path.as_path().file_name().unwrap().to_str().unwrap().to_string());
         } else if file_meta.is_dir() && config.recursion {
             match get_files_in_dir(
                 &(file_path.as_path().to_str().unwrap().to_string()), config, now)
@@ -282,7 +282,7 @@ fn get_files_in_dir(path: &String, config: &Config, now: SystemTime) -> Result<V
 
 fn execute_rm(target_dirs: &Vec<Dir>, config: &Config) -> Result<(), String> {
     let mut amount_target = 0;
-    for dir in target_dirs.iter() {
+    for dir in target_dirs.iter().rev() {
         dir.print();
         amount_target = amount_target + dir.get_amount_files();
     }
@@ -294,10 +294,10 @@ fn execute_rm(target_dirs: &Vec<Dir>, config: &Config) -> Result<(), String> {
         Err(_)  => {return Err("Canceled.".to_string());}
     }
 
-    for dir in target_dirs.iter() {
-        println!("{} :", dir.parent_path);
+    for dir in target_dirs.iter().rev() {
+        println!("{}/ :", dir.parent_path);
         for f in dir.files_path.iter() {
-            match remove_target(f, config) {
+            match remove_target(&format!("{}/{}", dir.parent_path, f), config) {
                 Ok(_)   => {},
                 Err(err_msg)  => {
                     println!("{} {}", err_msg, f);
@@ -314,7 +314,7 @@ fn execute_rm(target_dirs: &Vec<Dir>, config: &Config) -> Result<(), String> {
 fn remove_target(file_path: &String, config: &Config) -> Result<(), String>{
 
     if config.do_intr {
-        println!("    {}", file_path);
+        println!("    {:?}", Path::new(file_path).file_name().unwrap());
         match interaction("Remove This file? [Y/n]: ", config.assume_yes) {
             Ok(_)   => {},
             Err(_)  => {return Err("Canceled:".to_string());}
@@ -322,7 +322,7 @@ fn remove_target(file_path: &String, config: &Config) -> Result<(), String>{
     }
     if !config.dry_run {
         match fs::remove_file(file_path) {
-            Ok(_)   => {println!("Removed: {}", file_path)},
+            Ok(_)   => {println!("Removed: {:?}", Path::new(file_path).file_name().unwrap())},
             Err(_)  => {return Err("Remove failed:".to_string());},
         }
     } else {
@@ -393,30 +393,17 @@ mod test{
         let mut config = Config::new();
 
         for c in options.iter() {
-            match c {
-                'r' => {
-                    assert!(get_option(&format!("-{}", c).to_string(), &mut config).is_ok());
-                    assert!(config.recursion);
-                },
-                'i' => {
-                    assert!(get_option(&format!("-{}", c).to_string(), &mut config).is_ok());
-                    assert!(config.do_intr);
-                },
-                'y' => {
-                    assert!(get_option(&format!("-{}", c).to_string(), &mut config).is_ok());
-                    assert!(config.assume_yes);
-                },
-                'v' => {
-                    assert!(get_option(&format!("-{}", c).to_string(), &mut config).is_ok());
-                    assert!(config.verbose);
-                },
-                'n' => {
-                    assert!(get_option(&format!("-{}", c).to_string(), &mut config).is_ok());
-                    assert!(config.dry_run);
-                },
-                _   => assert!(get_option(&format!("-{}", c).to_string(), &mut config).is_err()),
-            }
+            assert!(get_option(&format!("-{}", c).to_string(), &mut config).is_ok());
         }
+
+        assert!(config.recursion);
+        assert!(config.do_intr);
+        assert!(config.assume_yes);
+        assert!(config.verbose);
+        assert!(config.dry_run);
+
+        assert!(get_option(&format!("-{}", 'e').to_string(), &mut config).is_err());
+
     }
 
     #[test]
