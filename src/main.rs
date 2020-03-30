@@ -7,6 +7,7 @@ Options
 -d [days]   : specify duration of day.(default is 60 days)
 -v          : verbose.
 -n          : dry run. not a remove, only show log.
+--remove-dir: remove directory.
 -h, --help  : show help.
 */
 
@@ -33,14 +34,24 @@ impl Dir {
         let now_sys_time            = SystemTime::now();
         let mut targets: Vec<Dir>    = Vec::new();
 
-        for path in config.target_path.iter() {
-            let mut t = match get_files_in_dir(path, config, now_sys_time) {
-                Ok(files)       => files,
-                Err(err_msg)    => return Err(err_msg),
-            };
-            targets.append(&mut t);
-        }
 
+        if !config.remove_dir{
+            for path in config.target_path.iter() {
+                let mut t = match get_files_in_dir(path, config, now_sys_time) {
+                    Ok(files)       => files,
+                    Err(err_msg)    => return Err(err_msg),
+                };
+                targets.append(&mut t);
+            }
+        } else {
+            for path in config.target_path.iter() {
+                let t = match get_dirs_in_dir(path, config, now_sys_time) {
+                    Ok(dirs)       => dirs,
+                    Err(err_msg)    => return Err(err_msg),
+                };
+                targets.push(t);
+            }
+        }
         Ok(targets)
     }
 
@@ -66,6 +77,7 @@ struct Config {
     recursion:      bool,
     verbose:        bool,
     dry_run:        bool,
+    remove_dir:     bool,
 }
 
 impl Config {
@@ -79,6 +91,7 @@ impl Config {
             recursion:      false,
             verbose:        false,
             dry_run:        false,
+            remove_dir:     false,
         }
     }
 
@@ -119,7 +132,7 @@ fn main() {
     let ret_config = match parse_config(&args) {
         Ok(config)    => config,
         Err(err_msg)      => {
-            println!("{}\nUsage: rm-old [dir_path] -d [days] -iryv", err_msg);
+            println!("{}\nUsage: rm-old [dir_path] [option]", err_msg);
             return ;
         },
     };
@@ -129,7 +142,7 @@ fn main() {
     let target_files = match Dir::get_target_files(&ret_config) {
         Ok(files)       => files,
         Err(err_msg)    => {
-            println!("{:?}", err_msg);
+            println!("{}", err_msg);
             return ;
         }
     };
@@ -188,6 +201,14 @@ fn parse_config(args: &[String]) -> Result<Config, String> {
 fn get_option(arg: &String, config: &mut Config) -> Result<(), String> {
     for c in arg.as_str()[1..].chars() {
         match c {
+            '-' => {
+                if arg == "--remove-dir" {
+                    config.remove_dir = true;
+                    break;
+                } else {
+                    return Err(format!("rm-old: illegal option: {}", arg));
+                }
+            },
             'd' => {
                 config.change_days = true;
             },
@@ -279,6 +300,38 @@ fn get_files_in_dir(path: &String, config: &Config, now: SystemTime) -> Result<V
     Ok(target)
 }
 
+fn get_dirs_in_dir(path: &String, config: &Config, now: SystemTime) -> Result<Dir, String>{
+    let files = match fs::read_dir(path) {
+        Err(why)    => {
+            return Err(format!("Can not open dir: {:?}", why.kind()));
+        },
+        Ok(paths)   => paths,
+    };
+
+    let mut target_dir = Dir::new();
+
+    for f in files {
+        let file_path           = f.unwrap().path();
+        let file_meta           = File::open(&file_path).unwrap().metadata().unwrap();
+        let duration_time_by_ac = match now.duration_since(file_meta.accessed().unwrap()){
+            Ok(duration)    => duration.as_secs(),
+            Err(e)          => {
+                return Err(format!("Clock may have gone backwards: {:?}",e.duration()));
+            },
+        };
+
+        if file_meta.is_dir() && (config.duration_days * 86400 < duration_time_by_ac) {
+            target_dir.files_path.push(
+                file_path.as_path().file_name().unwrap().to_str().unwrap().to_string());
+        }
+    }
+    if !target_dir.files_path.is_empty() {
+        target_dir.parent_path = path.clone();
+        return Ok(target_dir);
+    } else {
+        return Err(format!("Target directories not exists!"));
+    }
+}
 
 fn execute_rm(target_dirs: &Vec<Dir>, config: &Config) -> Result<(), String> {
     let mut amount_target = 0;
@@ -321,9 +374,16 @@ fn remove_target(file_path: &String, config: &Config) -> Result<(), String>{
         }
     }
     if !config.dry_run {
-        match fs::remove_file(file_path) {
-            Ok(_)   => {println!("Removed: {:?}", Path::new(file_path).file_name().unwrap())},
-            Err(_)  => {return Err("Remove failed:".to_string());},
+        if !config.remove_dir {
+            match fs::remove_file(file_path) {
+                Ok(_)   => {println!("Removed: {:?}", Path::new(file_path).file_name().unwrap())},
+                Err(_)  => {return Err("Remove failed:".to_string());},
+            }
+        } else {
+            match fs::remove_dir_all(file_path) {
+                Ok(_)   => {println!("Removed: {:?}", Path::new(file_path).file_name().unwrap())},
+                Err(_)  => {return Err("Remove failed:".to_string());},
+            }
         }
     } else {
         println!("Removed: {}", file_path);
@@ -380,6 +440,7 @@ fn show_help() -> String {
     -d [days]   : specify duration of day.(default is 60 days)
     -v          : verbose.
     -n          : dry run. not a remove, only show log.
+    --remove-dir: remove directory.
     -h, --help  : show help.(this!)
     ".to_string()
 }
@@ -408,10 +469,11 @@ mod test{
 
     #[test]
     fn test_parse_config() {
-        let correct_args: Vec<Vec<String>> = vec![  vec!["rm-old".to_string(), "-d".to_string(), "90".to_string(), "-riyvn".to_string()],
+        let correct_args: Vec<Vec<String>> = vec![  vec!["rm-old".to_string(), "-d".to_string(), "90".to_string(), "-riyvn".to_string(), "--remove-dir".to_string()],
                                                     vec!["rm-old".to_string(), "-d".to_string(), "90".to_string()],
                                                     vec!["rm-old".to_string(), "-riyvn".to_string()],
                                                     vec!["rm-old".to_string(), "-driyvn".to_string(), "90".to_string()],
+                                                    vec!["rm-old".to_string(), "--remove-dir".to_string()],
                                                     vec!["rm-old".to_string()],
         ];
 
@@ -419,8 +481,10 @@ mod test{
                                                     vec!["rm-old".to_string(), "-d".to_string(), "-riyvn".to_string()],
                                                     // not path.
                                                     vec!["rm-old".to_string(), "jifsl.?s_sdfe".to_string()],
-                                                    // After "-d"  not exist.
+                                                    // After "-d" not exist.
                                                     vec!["rm-old".to_string(), "-driyvn".to_string()],
+                                                    // not supported.
+                                                    vec!["rm-old".to_string(), "--get-list".to_string()],
         ];
 
         for arg in correct_args.iter() {
@@ -441,6 +505,7 @@ mod test{
             recursion:      false,
             verbose:        false,
             dry_run:        false,
+            remove_dir:     false,
         };
 
         let mut test_dir = match Dir::get_target_files(&config) {
@@ -457,5 +522,14 @@ mod test{
         };
 
         assert_eq!(3, test_dir.len());
+
+        config.remove_dir = true;
+
+        test_dir = match Dir::get_target_files(&config) {
+            Ok(dir)     => dir,
+            Err(msg)    => panic!("{}", msg),
+        };
+
+        assert_eq!(1, test_dir.len());
     }
 }
