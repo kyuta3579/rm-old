@@ -11,6 +11,7 @@ pub struct Config {
     verbose:        bool,
     dry_run:        bool,
     remove_dir:     bool,
+    remove_empty:   bool,
 }
 
 impl Config {
@@ -25,6 +26,7 @@ impl Config {
             verbose:        false,
             dry_run:        false,
             remove_dir:     false,
+            remove_empty:   false,
         }
     }
 
@@ -122,17 +124,18 @@ impl Config {
     pub fn remove_dir(&self) -> bool {
         self.remove_dir
     }
+    pub fn remove_empty(&self) -> bool {
+        self.remove_empty
+    }
 }
 
 fn get_option(arg: &String, config: &mut Config) -> Result<(), String> {
     for c in arg.as_str()[1..].chars() {
         match c {
             '-' => {
-                if arg == "--remove-dir" {
-                    config.remove_dir = true;
-                    break;
-                } else {
-                    return Err(format!("rm-old: illegal option: {}", arg));
+                match analyze_long_option(arg, config) {
+                    Ok(_) => break,
+                    Err(err_msg) => return Err(format!("{}", err_msg)),
                 }
             },
             'd' => {
@@ -162,6 +165,18 @@ fn get_option(arg: &String, config: &mut Config) -> Result<(), String> {
     Ok(())
 }
 
+fn analyze_long_option(arg: &String, config: &mut Config) -> Result<(), String>{
+    if arg == "--remove-dir" {
+        config.remove_dir = true;
+        Ok(())
+    } else if arg == "--remove-empty"{
+        config.remove_empty = true;
+        Ok(())
+    } else {
+        Err(format!("rm-old: illegal option: {}", arg))
+    }
+}
+
 fn get_path(arg: &String, config: &mut Config) -> Result<(), String> {
     let path = Path::new(arg);
     if path.exists() && path.is_dir(){
@@ -185,13 +200,14 @@ fn get_path(arg: &String, config: &mut Config) -> Result<(), String> {
 
 fn show_help() -> String {
     "rm-old: remove the old files in dir.
-    -r          : recursion. target dir in dir.
-    -i          : ask each file when remove.
-    -y          : assume yes.
-    -d [days]   : specify duration of day.(default is 60 days)
-    -v          : verbose.
-    -n          : dry run. not a remove, only show log.
-    --remove-dir: remove directory.
+    -r              : recursion. target dir in dir.
+    -i              : ask each file when remove.
+    -y              : assume yes.
+    -d [days]       : specify duration of day.(default is 60 days)
+    -v              : verbose.
+    -n              : dry run. not a remove, only show log.
+    --remove-dir    : remove directory.
+    --remove-empty:
     -h, --help  : show help.(this!)
     ".to_string()
 }
@@ -222,12 +238,13 @@ mod test{
 
     #[test]
     fn test_parse_config() {
-        let correct_args: Vec<Vec<String>> = vec![  vec!["rm-old".to_string(), "-d".to_string(), "90".to_string(), "-riyvn".to_string(), "--remove-dir".to_string()],
+        let correct_args: Vec<Vec<String>> = vec![  vec!["rm-old".to_string(), "-d".to_string(), "90".to_string(), "-riyvn".to_string(), "--remove-dir".to_string(), "--remove-empty".to_string()],
                                                     vec!["rm-old".to_string(), "-d".to_string(), "90".to_string()],
                                                     vec!["rm-old".to_string(), "-riyvn".to_string()],
                                                     vec!["rm-old".to_string(), "-driyvn".to_string(), "90".to_string()],
                                                     vec!["rm-old".to_string(), "--remove-dir".to_string()],
-                                                    vec!["rm-old".to_string()],
+                                                    vec!["rm-old".to_string(), "--remove-empty".to_string()],
+                                                    vec!["rm-old".to_string(), "--remove-empty".to_string()],
         ];
 
         let invalid_args: Vec<Vec<String>> = vec![  // After "-d" is not number.

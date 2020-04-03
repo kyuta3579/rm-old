@@ -41,6 +41,7 @@ impl Dir {
                 targets.push(t);
             }
         }
+        println!("{:?}", SystemTime::now().duration_since(now_sys_time));
         Ok(targets)
     }
 
@@ -106,7 +107,9 @@ fn get_files_in_dir(path: &String, config: Config, now: SystemTime) -> Result<Ve
         }
     }
 
-    target.push(search_dir);
+    if !search_dir.files_path.is_empty() {
+        target.push(search_dir);
+    }
 
     if !thread_pool.is_empty() {
         for node in thread_pool {
