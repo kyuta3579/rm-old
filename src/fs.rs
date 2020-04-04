@@ -217,9 +217,9 @@ mod test{
 
         let config = Config::parse_config(&vec!["rm-old".to_string(), "test_dir".to_string(), "-d".to_string(), "0".to_string(), "--remove-dir".to_string()]).unwrap();
 
-        test_dir = match Dir::get_target_files(&config) {
-            Ok(dir)     => dir,
-            Err(msg)    => panic!("{}", msg),
+        match Dir::get_target_files(&config) {
+            Ok(dir)     => test_dir = dir,
+            Err(_)    => (),
         };
 
         assert_eq!(1, test_dir.len());
