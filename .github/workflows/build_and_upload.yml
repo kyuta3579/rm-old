@@ -1,4 +1,4 @@
-name: Rust
+name: build_and_upload
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
     - name: Build
       run: cargo build --verbose --release
     - name: Run tests
-      run: cargo test --verbose
+      run: chmod 755 gen_test_dir.sh && ./gen_test_dir.sh && cargo test --verbose
 
     - name: Copy artifact
       run: mkdir -p release && cp target/release/main release/
