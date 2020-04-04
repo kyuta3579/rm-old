@@ -18,8 +18,7 @@ jobs:
     - name: Run tests
       run: |
         chmod 755 gen_test_dir.sh
-        ./gen_test_dir.sh
-        cargo test --verbose
+        ./gen_test_dir.sh && cargo test --verbose
 
     - name: Copy artifact
       run: mkdir -p release && cp target/release/main release/
