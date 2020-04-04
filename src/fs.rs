@@ -206,6 +206,8 @@ mod test{
         };
         assert_eq!(1, test_dir.len());
 
+        test_dir.clear();
+
         let config = Config::parse_config(&vec!["rm-old".to_string(), "test_dir".to_string(), "-d".to_string(), "0".to_string(), "-r".to_string()]).unwrap();
 
         test_dir = match Dir::get_target_files(&config) {
@@ -214,6 +216,8 @@ mod test{
         };
 
         assert_eq!(3, test_dir.len());
+
+        test_dir.clear();
 
         let config = Config::parse_config(&vec!["rm-old".to_string(), "test_dir".to_string(), "-d".to_string(), "0".to_string(), "--remove-dir".to_string()]).unwrap();
 
